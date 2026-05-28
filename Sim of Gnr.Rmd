@@ -1,0 +1,292 @@
+---
+title: "Sim of Cech complex"
+author: "Johan Brabrand"
+date: "`r Sys.Date()`"
+output: html_document
+---
+```{r}
+cech.find = function(pts, r){
+  cech.start = function(start, rest, r) {
+    simplices = list(start)
+    if (length(rest) == 0) return(simplices)
+    for (i in 1:length(rest)) {
+      new.pt = rest[i]
+      if (abs(new.pt - start[length(start)]) <= 2*r) {
+        remaining_points = if (i < length(rest)) rest[(i+1):length(rest)] else c()
+        
+        child.simplices = cech.start(c(start, new.pt), remaining_points, r)
+        simplices = c(simplices, child.simplices)
+      }
+      }
+    return(simplices)
+  }
+  
+  pts.sorted = sort(pts)
+  all.cech = list()
+  for (i in 1:length(pts)){
+    remaining = if (i < length(pts)) pts.sorted[(i+1):length(pts)] else c()
+    all.cech = unique(c(all.cech, cech.start(pts.sorted[i], remaining, r)))
+  }
+  return(unique(all.cech))
+}
+Y = cech.find(c(0.1, 0.2, 0.4, 0.5), 0.2)
+(list(c(0.1, 0.4)) %in% Y)
+
+
+```
+
+
+
+```{r}
+connected = function(Y, r){
+  Y = rev(sort(Y))
+  return(all((Y - c(Y[2:length(Y)], 0))[1:(length(Y) - 1)] <= 2*r))
+}
+connected(runif(10000), 1/sqrt(1000000))
+```
+
+
+```{r}
+h.krA = function(Y, k, r, A = c(0, 1)){
+  if (
+    connected(Y, r)
+    &
+    length(Y) == k
+    &
+    mean(c(min(Y), max(Y))) <= A[2] & mean(c(min(Y), max(Y))) >= A[1]
+  ){
+    return(TRUE)
+  }
+  else return(FALSE)
+}
+k = 3
+Y = c(0.2, 0.4, 0.6)
+2*h.krA(Y, k, 0.2, c(0.4, 0.6))
+```
+
+```{r}
+G.krA = function(Y, k, r, A = c(0, 1)){
+  k.sets = combn(Y, k, simplify = F)
+  output = 0
+  for (i in 1:length(k.sets)){
+    output = output + h.krA(k.sets[[i]], k, r, A)
+  }
+  return(output)
+}
+G.krA(runif(50), 3, 1/50)
+```
+
+```{r}
+G.krA.updated = function(Y, k, r, A = c(0, 1)) {
+  # 1. Sort points once to allow distance-based pruning
+  pts = sort(Y)
+  n = length(pts)
+  if (n < k) return(0)
+  
+  # The threshold for connectivity is the diameter (2*r)
+  threshold = 2 * r
+  total_count = 0
+  
+  # 2. Define a recursive search function
+  # start_pt: The first point in our potential k-set
+  # last_idx: The index of the most recently added point
+  # depth: How many points are currently in the set
+  find_connected = function(start_pt, last_idx, depth) {
+    # Base Case: We found a set of size k
+    if (depth == k) {
+      # The max point is pts[last_idx] because the array is sorted
+      midpoint = (start_pt + pts[last_idx]) / 2
+      if (midpoint >= A[1] && midpoint <= A[2]) {
+        return(1)
+      }
+      return(0)
+    }
+    
+    local_count = 0
+    next_idx = last_idx + 1
+    
+    # Only iterate through points that are within 'threshold' of the last point
+    while (next_idx <= n && (pts[next_idx] - pts[last_idx]) <= threshold) {
+      local_count = local_count + find_connected(start_pt, next_idx, depth + 1)
+      next_idx = next_idx + 1
+    }
+    return(local_count)
+  }
+  
+  # 3. Start the search from each possible point
+  for (i in 1:(n - k + 1)) {
+    total_count = total_count + find_connected(pts[i], i, 1)
+  }
+  
+  return(total_count)
+}
+G.krA.updated(runif(10000), 3, 1/10000)
+
+```
+
+
+```{r}
+nsim = 20
+k = 4
+n.seq = (k+1):20
+r.seq = 1 / n.seq
+
+G.seq = function(n.seq, r.seq, nsim, k){
+  G = matrix(NA, nrow = nsim, ncol = length(n.seq))
+  colnames(G) = n.seq
+  for (i in 1:length(n.seq)){
+    for (j in 1:nsim){
+      G[j, i] = G.krA.updated(runif(n.seq[i]), k, r.seq[i])
+      } 
+  }
+  return(G)
+}
+G.seq(n.seq, r.seq, nsim, k)
+```
+
+
+
+```{r}
+nsim = 200
+k = 3
+M = 100
+
+n.seq = (k + 1):M
+r.seq = 1 / n.seq^((k-1)/k)
+
+G.n = matrix(NA, nrow = nsim, ncol = length(n.seq))
+colnames(G.n) = n.seq
+
+vals.n = matrix(NA, nrow = nsim, ncol = length(n.seq))
+colnames(vals.n) = n.seq
+
+G.n = G.seq(n.seq, r.seq, nsim, k)
+
+for (i in 1:length(n.seq)){
+ for (j in 1:nsim){
+   vals.n[j, i] = r.seq[i]^(1 - k) * G.n[j, i] / n.seq[i]^k
+ } 
+}
+
+# print("n")
+# vals.n
+
+#saveRDS(vals.n, file = "vals_n.rds")
+
+
+#####
+
+r.seq = 1 / sqrt(n.seq)
+
+G.sqrt = matrix(NA, nrow = nsim, ncol = length(n.seq))
+colnames(G.sqrt) = n.seq
+
+vals.sqrt = matrix(NA, nrow = nsim, ncol = length(n.seq))
+colnames(vals.sqrt) = n.seq
+
+G.sqrt = G.seq(n.seq, r.seq, nsim, k)
+
+
+for (i in 1:length(n.seq)){
+ for (j in 1:nsim){
+   vals.sqrt[j, i] = r.seq[i]^(1 - k) * G.sqrt[j, i] / n.seq[i]^k
+ } 
+}
+# print("sqrt")
+# vals.sqrt
+
+#saveRDS(vals.sqrt, file = "vals_sqrt.rds")
+
+####
+r.seq = 1 / n.seq^2
+
+
+G.2 = matrix(NA, nrow = nsim, ncol = length(n.seq))
+colnames(G.2) = n.seq
+vals.2 = matrix(NA, nrow = nsim, ncol = length(n.seq))
+colnames(vals.2) = n.seq
+
+G.2 = G.seq(n.seq, r.seq, nsim, k)
+
+
+for (i in 1:length(n.seq)){
+ for (j in 1:nsim){
+   vals.2[j, i] = r.seq[i]^(1 - k) * G.2[j, i] / n.seq[i]^k
+ }
+}
+print("sq")
+vals.2
+#saveRDS(vals.2, file = "vals_sq.rds")
+
+
+#####
+
+r.seq = exp(-n.seq)
+
+G.exp = matrix(NA, nrow = nsim, ncol = length(n.seq))
+colnames(G.exp) = n.seq
+
+vals.exp = matrix(NA, nrow = nsim, ncol = length(n.seq))
+colnames(vals.exp) = n.seq
+
+G.exp = G.seq(n.seq, r.seq, nsim, k)
+
+
+for (i in 1:length(n.seq)){
+ for (j in 1:nsim){
+   vals.exp[j, i] = r.seq[i]^(1 - k) * G.exp[j ,i] / n.seq[i]^k
+ }
+}
+print("exp")
+vals.exp
+#saveRDS(vals.exp, file = "vals_exp.rds")
+
+
+#####
+
+r.seq = 1 / log(n.seq)
+
+G.log = matrix(NA, nrow = nsim, ncol = length(n.seq))
+colnames(G.log) = n.seq
+
+vals.log = matrix(NA, nrow = nsim, ncol = length(n.seq))
+colnames(vals.log) = n.seq
+
+G.log = G.seq(n.seq, r.seq, nsim, k)
+
+for (i in 1:length(n.seq)){
+ for (j in 1:nsim){
+   vals.log[j, i] = r.seq[i]^(1 - k) * G.log[j, i] / n.seq[i]^k
+ } 
+}
+# print("log")
+# vals.log
+#saveRDS(vals.log, file = "vals_log.rds")
+
+```
+
+
+
+```{r}
+plot(colMeans(vals.n), type = "l")
+```
+
+```{r}
+nsim = 50
+n.seq = c(5, 10, 20, 40)
+r.seq = 1 / n.seq^((k-1)/k) # to slow try n^(-(k-1)/k)
+(G = G.seq(n.seq, r.seq, nsim, k))
+```
+
+```{r}
+i = 4
+plot(ecdf(G[,i]))
+f = function(x) return(ppois(x, mean(G[, i])))
+curve(f, add = T)
+```
+
+
+```{r}
+
+```
+
