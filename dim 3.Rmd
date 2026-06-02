@@ -1,0 +1,653 @@
+---
+title: "Dim 3"
+author: "Johan Brabrand"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(TDA)
+library(ExtDist)
+library(VGAM)
+library(optimization)
+library(rgl)
+library(patchwork)
+```
+
+```{r}
+par(mfrow = c(1, 2))
+qqweibull = function(X, main = "qqWeibull"){
+  f = ecdf(X)
+  t_seq = sort(X)
+  x = log(t_seq[t_seq >= 0])
+  y = log(- log(1 - f(t_seq[t_seq >= 0])))
+  
+  I = x < Inf & y < Inf
+  x = x[I]
+  y = y[I]  
+  
+  
+  plot(x,y, main = main)
+  
+  M = lm(y ~ x)
+  k = M$coefficients[2]
+  lambda =  exp(- M$coefficients[1] / k)
+  
+  abline(M, lty = 2, col = "darkgray")
+
+  
+  return(c("k" = unname(k), "lambda" = unname(lambda)))
+}
+
+qqweibull(rweibull(10000, 2, 10))
+
+qqgumbel = function(X){
+  f = ecdf(X)
+  t_seq = sort(X)
+  x = t_seq
+  y = -log(-log(f(t_seq)))
+  
+
+  I = x < Inf & y < Inf
+  x = x[I]
+  y = y[I]
+  
+  plot(x,y, main = "qqGumbel")
+  
+  M = lm(y ~ x)
+  beta = 1 / M$coefficients[2]
+  mu = - M$coefficients[1] * beta
+  
+  abline(M, lty = 2, col = "grey")
+  
+  return(c("beta" = unname(beta), "mu" = unname(mu)))
+}
+
+qqgumbel(rGumbel(10000, 3, 2))
+
+```
+```{r}
+generate_points_binom = function(n, d) matrix(runif(d * n), nrow = n)
+
+
+generate_points_pois = function(lambda, d){
+  n = rpois(1, lambda)
+  return(generate_points_binom(n, d))
+}
+```
+
+
+```{r}
+max_lifetimes_gudhi = function(Y, r = Inf){
+  if (ncol(Y) > 3) stop("dimmension to large")
+  if (nrow(Y) < 3) stop("to few points")
+  
+  cech = alphaComplexDiag(Y, printProgress = F)$diagram
+  cech_finite = cech[2:nrow(cech), ]
+  dims = cech_finite[, 1]
+  births = cech_finite[, 2]
+  deaths = cech_finite[, 3]
+  lifetimes = sqrt(deaths) - sqrt(births) 
+  output = numeric()
+  
+  i = 1
+  
+  for (d in 0:(ncol(Y) - 1)){
+    if (!(d %in% dims)) output = c(output, NA)
+    
+    else{
+      if (all((dims != d | sqrt(deaths) >= r))) output = c(output, NA) 
+      
+      else output = c(output, max(lifetimes[dims == d & sqrt(deaths) < r]))
+    }
+    
+    names(output)[i] = paste("dim =", d)
+    i = i + 1
+  }
+  return(output)
+}
+max_lifetimes_gudhi(generate_points_pois(30, 3), 0.2)
+
+```
+
+
+```{r}
+sim_maxlifetimes_pois = function(n, r = Inf, nsim, d = 1, holedim = 0){
+  output = numeric()
+  for (i in 1:nsim){
+    if (d == 1){
+      while(TRUE){
+        pts = generate_points_pois(n, d)
+        if (length(pts) > 2) break
+      }
+      sim = lifetimes(pts)
+      sim = sim[sim < r]
+      if (length(sim) == 0) sim = NA
+      else sim = max(sim)
+      names(sim) = "dim = 0"
+    }
+    else{
+      while(TRUE){
+        pts = generate_points_pois(n, d)
+        if (nrow(pts) > 2) break
+        else next
+      }
+      sim = max_lifetimes_gudhi(pts, r)[holedim + 1]
+      name = names(sim)
+      if (length(sim) == 0) sim = NA
+      else sim = max(sim)
+      names(sim) = name
+    }
+    output = rbind(output, sim)
+  }
+  rownames(output) = 1:nrow(output)
+  
+  return(output)
+}
+
+
+sim_maxlifetimes_pois(60, 1, 10, 3, 2)
+```
+```{r}
+n_seq = 3:300
+r_seq = n_seq^(- 1/2)
+nsim = 100
+lmax_p = numeric(length(n_seq))
+names(lmax_p) = n_seq
+n = 1
+while (n <= length(n_seq)){
+  sim = sim_maxlifetimes_pois(n_seq[n], Inf , nsim = nsim, 3, 2)
+  if (!all(is.na(sim))){
+    lmax_p[n] = mean(na.omit(sim))
+    n = n + 1
+  }
+  if (0 == n %% 5) cat(n, " ")
+}
+
+plot(n_seq, lmax_p, type = "l")
+```
+```{r}
+M1 = lm(lmax_p ~ I(1 / sqrt(n_seq)))
+a = M1$coefficients 
+plot(n_seq, lmax_p, type = "l")
+f = function(x) a[2] / sqrt(x) + a[1]
+curve(f, add = T, col = "blue")
+```
+
+
+
+```{r}
+generate_points_binom_circ = function(n, r = 1, center = c(0, 0, 0)){
+  pts = matrix(NA, nrow = n, ncol = 3)
+  colnames(pts) = c("x", "y", "z")
+  i = 1
+  while (is.na(pts[n, 1])){
+    samp = runif(3, -r, r)
+    if (sqrt(sum(samp^2)) <= r){
+      pts[i, ] = samp + center
+      i = i + 1
+    }
+  }
+  return(pts)
+}
+
+generate_points_binom_circ(4, 1)
+```
+
+
+```{r}
+generate_points_pois_circ = function(lambda, r = 1, center = c(0, 0, 0)){
+  n = rpois(1, lambda)
+  
+  pts = generate_points_binom_circ(n, r, center)
+  return(pts)
+}
+pts = generate_points_pois_circ(10000)
+plot3d(pts[, 1], pts[, 2], pts[, 3])
+```
+
+
+```{r}
+r_circ = (3 / (pi * 4))^(1 / 3)
+```
+
+
+```{r}
+sim_maxlifetimes_pois_circ = function(n, r = Inf, nsim, holedim = 2, verbose = F){
+  output = numeric()
+  for (i in 1:nsim){
+    while(TRUE){
+        pts = generate_points_pois_circ(n, r = r_circ)
+        if (nrow(pts) > 2) break
+        else next
+      }
+      sim = max_lifetimes_gudhi(pts, r)[holedim + 1]
+      name = names(sim)
+      if (length(sim) == 0) sim = NA
+      else sim = max(sim)
+      names(sim) = name
+      output = rbind(output, sim)
+      
+      if (0 == i %% 5 & verbose) cat(i, " ")
+
+  }
+  rownames(output) = 1:nrow(output)
+  if (verbose) cat("\n")
+  return(output)
+}
+
+
+sim_maxlifetimes_pois_circ(1000, 1/10, 10, 2)
+```
+
+```{r}
+n = 10^5
+r = n^(- 46 / 108)
+nsim = 10^2
+M_n_pois = sim_maxlifetimes_pois_circ(n, r, nsim)
+```
+
+
+
+```{r}
+lifetimes_circ_optim = function(flat_pts){
+  pts = matrix(flat_pts, ncol = 3, byrow = T)
+  
+  dists = sqrt(rowSums(pts^2))
+  
+  if (any(dists > r_circ)) return(-10^6)
+  
+  max_void = max_lifetimes_gudhi(pts)[3]
+  
+  if (is.na(max_void)) return(0)
+  else return(max_void)
+}
+
+lifetimes_circ_optim(as.vector(t(generate_points_binom_circ(10, r_circ))))
+```
+
+
+```{r}
+
+flatten = function(Y) as.vector(t(Y))
+
+initial_guess = flatten(generate_points_binom_circ(4, r_circ))
+
+lower = rep(-r_circ, length(initial_guess))
+upper = rep(r_circ, length(initial_guess))
+
+
+SA = optim_sa(lifetimes_circ_optim, start = initial_guess, 
+               maximization = TRUE, trace = F,lower = lower ,upper = upper,
+                control = list(ac_acc = 0.00001, t0 = 1000, r = 0.95, 
+                               nlimit = 50000, maxgood = 1000))
+
+
+```
+
+```{r}
+opt = matrix(SA$par, ncol = 3, byrow = T)
+norms = function(pts) sqrt(rowSums(pts^2))
+print(norms(opt))
+print(r_circ)
+
+plot3d(opt[, 1], opt[, 2], opt[, 3], 
+       xlim = c(-r_circ, r_circ), ylim = c(- r_circ, r_circ), zlim = c(-r_circ, r_circ))
+guess = matrix(initial_guess, ncol = 3, byrow = 3)
+plot3d(guess[, 1], guess[, 2], guess[, 3], col = "red", add = T)
+
+```
+
+```{r}
+l_max_theo = r_circ - r_circ * (2 * sqrt(2) / 3)
+points_geom = matrix(c(0.61, 0, 0, -0.20, 0, 0.57, -0.20, 0.50, -0.28, -0.20, -0.50, -0.28), nrow = 4, byrow = T)
+c("numeric" = SA$function_value, "Theoretical" = l_max_theo, 
+  "geometric" = unname(lifetimes_circ_optim(flatten(points_geom))))
+```
+
+
+```{r}
+par(mfrow = c(1, 2))
+qqweibull(l_max_theo - M_n_pois)
+qqgumbel(l_max_theo - M_n_pois)
+```
+
+```{r}
+sim_maxlifetimes_binom_circ = function(n, r = Inf, nsim, holedim = 2, verbose = F){
+  output = numeric()
+  for (i in 1:nsim){
+      pts = generate_points_binom_circ(n, r = r_circ)
+      sim = max_lifetimes_gudhi(pts, r)[holedim + 1]
+      name = names(sim)
+      if (length(sim) == 0) sim = NA
+      else sim = max(sim)
+      names(sim) = name
+      output = rbind(output, sim)
+      
+      if (0 == i %% 5 & verbose) cat(i, " ")
+
+  }
+  rownames(output) = 1:nrow(output)
+  if (verbose) cat("\n")
+  return(output)
+}
+
+
+sim_maxlifetimes_binom_circ(1000, 1/10, 12, 2)
+```
+
+```{r}
+n = 10^3
+r = n^(- 46 / 108)
+nsim = 10^2
+
+M_n_binom = sim_maxlifetimes_binom_circ(n, r, nsim)
+
+```
+
+```{r}
+par(mfrow = c(1, 2))
+qqweibull(l_max_theo - M_n_binom)
+qqgumbel(l_max_theo - M_n_binom)
+```
+
+```{r}
+n_seq = 4:300
+nsim = 100
+lmax_bin3 = numeric(length(n_seq))
+names(lmax) = n_seq
+n = 1
+
+while (n <= length(n_seq)){
+  sim = sim_maxlifetimes_binom_circ(n_seq[n], nsim = nsim, 3, 2)
+  if (!all(is.na(sim))){
+    lmax_bin3[n] = mean(na.omit(sim))
+    n = n + 1
+  }
+  if (0 == n %% 10) cat(n, " ")
+}
+plot(n_seq, lmax_bin, type = "l")
+```
+
+```{r}
+M1 = lm(lmax_bin ~ I(log(n_seq)/n_seq) - 1)
+a = M1$coefficients 
+plot(n_seq, lmax_bin, type = "l")
+f = function(x) a * log(x) / x
+curve(f, add = T, col = "blue")
+```
+
+
+```{r}
+par(mfrow = c(2, 3))
+n_seq = c(10, 20, 50, 100, 200, 1000)
+r_seq = n_seq^(-46 / 108)
+nsim = 100
+
+for (i in 1:length(n_seq)){
+  M = na.omit(sim_maxlifetimes_binom_circ(n_seq[i], nsim = nsim, holedim = 2))
+  print(qqweibull(l_max_theo - M, main = paste("n =", n_seq[i])))
+}
+
+
+```
+```{r}
+M = na.omit(sim_maxlifetimes_binom_circ(10000, nsim = nsim, holedim = 2))
+print(mean((l_max_theo - M) < 0))
+print(min(M))
+```
+
+```{r}
+#4-sparse
+par(mfrow = c(2, 3))
+n_seq = c(10, 20, 50, 100, 200, 1000)
+r_seq = n_seq^(-46 / 108)
+nsim = 100
+
+for (i in 1:length(n_seq)){
+  M = na.omit(sim_maxlifetimes_binom_circ(n_seq[i], r_seq[i], nsim = nsim, holedim = 2))
+  print(qqweibull(l_max_theo * r_seq[i] / r_circ - M, main = paste("n =", n_seq[i])))
+}
+```
+
+
+```{r}
+par(mfrow = c(2, 3))
+n_seq = c(10, 20, 50, 100, 1000)
+r_seq = n_seq^(- 46 / 108)
+nsim = 100
+
+for (i in 1:length(n_seq)){
+  M = sim_maxlifetimes_pois_circ(n_seq[i], r_seq[i], nsim)
+  print(qqweibull(l_max_theo * r_seq[i] / r_circ - M, main = paste("n =",n_seq[i])))
+}
+
+print(qqweibull(l_max_theo * r_seq[i] / r_circ - M_n_pois, main = "n = 10000"))
+```
+
+
+```{r}
+r_seq
+```
+
+```{r}
+x = runif(40, 0,1)
+y = rnorm(40,0,1) + x
+E = lm(y ~x)
+E$coefficients[1]
+```
+# Plots using GAI
+
+```{r}
+qqweibull_gg = function(X, main = "qqWeibull"){
+  # 1. Empirical CDF and Sorting
+  f = ecdf(X)
+  t_seq = sort(X)
+  
+  # Filter for non-negative values to handle logs safely
+  valid_t = t_seq[t_seq >= 0]
+  x = log(valid_t)
+  y = log(-log(1 - f(valid_t)))
+  
+  # 2. Clean up Infinite values safely
+  I = is.finite(x) & is.finite(y)
+  clean_df = data.frame(x = x[I], y = y[I])
+  
+  # 3. Fit Linear Model and Calculate Estimates
+  M = lm(y ~ x, data = clean_df)
+  k = coef(M)[2]
+  lambda = exp(-coef(M)[1] / k)
+  
+  # 4. Print Estimates to Console
+  cat(sprintf("--- Estimates for %s ---\n", main))
+  cat(sprintf("k (Shape)     : %.4f\n", k))
+  cat(sprintf("lambda (Scale): %.4f\n\n", lambda))
+  
+  # 5. Build the Beautiful ggplot object
+  p = ggplot(clean_df, aes(x = x, y = y)) +
+    # Actual Data points
+    geom_point(color = "black", alpha = 0.6, size = 1.5) +
+    # Fitted Linear Model Line
+    geom_smooth(method = "lm", formula = y ~ x, se = FALSE, 
+                color = "darkgray", linetype = "dashed", linewidth = 0.8) +
+    # Nice Mathematical Axis Labels
+    labs(
+      title = paste(main, "k =", round(k, 2)),
+      x = expression(log(x)),
+      y = expression(log(-log(1 - F(x))))
+    ) +
+    theme_minimal(base_size = 10) +
+    theme(
+      plot.title = element_text(face = "bold", hjust = 0.5),
+      panel.grid.minor = element_blank()
+    )
+  
+  # 6. Return the plot object instead of the stats vector
+  return(p)
+}
+qqweibull_gg(rweibull(100, 2, 1), "hej")
+```
+
+```{r}
+par(mfrow = c(2, 3))
+n_seq = c(10, 20, 50, 100, 1000)
+r_seq = n_seq^(- 46 / 108)
+nsim = 100
+P_pois3 = list()
+
+for (i in 1:length(n_seq)){
+  M = sim_maxlifetimes_pois_circ(n_seq[i], r_seq[i], nsim)
+  P_pois3 = c(P_pois3,qqweibull_gg(l_max_theo * r_seq[i] / r_circ - M, main = paste("n =",n_seq[i])))
+}
+
+P_pois3 = c(P_pois3, qqweibull_gg(l_max_theo * r_seq[i] / r_circ - M_n_pois, main = "n = 10000"))
+```
+```{r}
+final_grid = wrap_plots(P_pois3[[1]], P_pois3[[2]], P_pois3[[3]], 
+                        P_pois3[[4]], P_pois3[[5]], P_pois3[[6]], 
+                        ncol = 3, nrow = 2) + 
+  plot_annotation(
+    title = "Weibull Q-Q plot of Maximum Lifetimes of the voids \nof a 3-dimensional homogeneous Poisson spatial point process",
+    
+    # Using bold() inside bquote to force the math symbols to render bold
+    subtitle = bquote(bold("in" ~ B[r[c]](0) ~ "with parameter n")),
+    
+    theme = theme(
+      # Main Title Settings
+      plot.title = element_text(size = 14, face = "bold", hjust = 0.5, lineheight = 1.2),
+      
+      # Subtitle Settings: Size matched to 14, face set to bold, and moved closer to the title
+      plot.subtitle = element_text(size = 14, face = "bold", hjust = 0.5, margin = margin(t = 8))
+    )
+  )
+
+print(final_grid)
+```
+```{r}
+par(mfrow = c(2, 3))
+n_seq = c(10, 20, 50, 100, 1000, 10000)
+r_seq = n_seq^(-46 / 108)
+nsim = 100
+P_binom3 = list()
+
+for (i in 1:length(n_seq)){
+  M = na.omit(sim_maxlifetimes_binom_circ(n_seq[i], nsim = nsim, holedim = 2))
+  P_binom3 = c(P_binom3,qqweibull_gg(l_max_theo - M, main = paste("n =",n_seq[i])))
+}
+```
+
+```{r}
+final_grid = wrap_plots(P_binom3[[1]], P_binom3[[2]], P_binom3[[3]], 
+                        P_binom3[[4]], P_binom3[[5]], P_binom3[[6]], 
+                        ncol = 3, nrow = 2) + 
+  plot_annotation(
+    title = "Weibull Q-Q plot of Maximum Lifetimes of the voids\nof a 3-dimensional homogeneous binomial spatial point process",
+    
+    # Using bold() inside bquote to force the math symbols to render bold
+    subtitle = bquote(bold("in" ~ B[r[c]](0) ~ "with n points")),
+    
+    theme = theme(
+      # Main Title Settings
+      plot.title = element_text(size = 14, face = "bold", hjust = 0.5, lineheight = 1.2),
+      
+      # Subtitle Settings: Size matched to 14, face set to bold, and moved closer to the title
+      plot.subtitle = element_text(size = 14, face = "bold", hjust = 0.5, margin = margin(t = 8))
+    )
+  )
+
+print(final_grid)
+```
+```{r}
+n_seq = 4:300
+nsim = 100
+lmax_bin3 = numeric(length(n_seq))
+names(lmax) = n_seq
+n = 1
+
+while (n <= length(n_seq)){
+  sim = sim_maxlifetimes_binom_circ(n_seq[n], nsim = nsim, 3, 2)
+  if (!all(is.na(sim))){
+    lmax_bin3[n] = mean(na.omit(sim))
+    n = n + 1
+  }
+  if (0 == n %% 10) cat(n, " ")
+}
+```
+```{r}
+
+df = data.frame(n_seq = n_seq, lmax_bin3 = lmax_bin3)
+
+ggplot(df, aes(x = n_seq)) +
+  # Raw data: Thicker line (linewidth = 1.2)
+  geom_line(aes(y = lmax_bin3, color = "Simulated maximum lifetime"), linewidth = 1.2) +
+
+  # Manual color selection & Legend formatting
+  scale_color_manual(
+    name = NULL, # Legend name
+    values = c("Simulated maximum lifetime" = "darkgreen")
+  ) +
+  
+  # Labels and styling
+  labs(title = "Maximum Lifetimes of the voids \nof a 3-dimensional homogeneous binomial spatial point process",
+    x = "n",
+    y = "Maximum Lifetimes",
+    subtitle = bquote(bold("in" ~ B[r[c]](0) ~ "with n points"))
+  ) +
+  theme_minimal(base_size = 14) + 
+  theme(
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(size = 14, face = "bold", hjust = 0.5, margin = margin(t = 1)),
+    panel.grid.minor = element_blank(),
+legend.position = c(0.95, 0.05),      # Places the legend in the top-right
+    legend.justification = c("right", "bottom"), # Anchors the top-right corner of the legend box
+    legend.background = element_rect(fill = "white", color = "lightgray") # Adds a clean background box  
+)
+```
+```{r}
+n_seq = 30:300
+nsim = 100
+lmax_pois3 = numeric(length(n_seq))
+names(lmax) = n_seq
+n = 1
+
+while (n <= length(n_seq)){
+  sim = sim_maxlifetimes_pois_circ(n_seq[n], nsim = nsim, 3, 2)
+  if (!all(is.na(sim))){
+    lmax_pois3[n] = mean(na.omit(sim))
+    n = n + 1
+  }
+  if (0 == n %% 10) cat(n, " ")
+}
+```
+
+```{r}
+
+df = data.frame(n_seq = n_seq, lmax_pois3 = lmax_pois3)
+
+ggplot(df, aes(x = n_seq)) +
+  # Raw data: Thicker line (linewidth = 1.2)
+  geom_line(aes(y = lmax_pois3, color = "Simulated maximum lifetime"), linewidth = 1.2) +
+
+  # Manual color selection & Legend formatting
+  scale_color_manual(
+    name = NULL, # Legend name
+    values = c("Simulated maximum lifetime" = "darkgreen")
+  ) +
+  
+  # Labels and styling
+  labs(title = "Maximum Lifetimes of the voids \nof a 3-dimensional homogeneous Poisson spatial point process",
+    x = "n",
+    y = "Maximum Lifetimes",
+    subtitle = bquote(bold("in" ~ B[r[c]](0) ~ "with with parameter n"))
+  ) +
+  theme_minimal(base_size = 14) + 
+  theme(
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(size = 14, face = "bold", hjust = 0.5, margin = margin(t = 1)),
+    panel.grid.minor = element_blank(),
+legend.position = c(0.95, 0.05),      # Places the legend in the top-right
+    legend.justification = c("right", "bottom"), # Anchors the top-right corner of the legend box
+    legend.background = element_rect(fill = "white", color = "lightgray") # Adds a clean background box  
+)
+```
+
